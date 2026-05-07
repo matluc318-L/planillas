@@ -1,55 +1,61 @@
-# Sistema de gestión de empleados y planillas
+# Sistema Web de Gestión de Empleados y Planillas
 
-Aplicación web de nivel intermedio: **React (Vite) + TailwindCSS** en el frontend y **Node.js (Express) + Prisma + SQLite + JWT** en el backend.
+Aplicación empresarial **full-stack**: React (Vite) + Tailwind + Recharts en el frontend; **Node.js + Express + SQLite (better-sqlite3)** en el backend — **sin Prisma**, con SQL explícito y capas modulares.
 
-## Requisitos
+## Características principales
 
-- [Node.js](https://nodejs.org/) 18 o superior (recomendado 20+)
-- npm (incluido con Node)
+- Autenticación JWT, registro (primer usuario `ADMIN`, siguientes `RRHH`), roles `ADMIN` / `RRHH` / `EMPLEADO`
+- Dashboard con KPIs y gráficos (asistencia, masa salarial por área)
+- CRUD de empleados con foto (**Multer**), búsqueda, filtro por área y paginación
+- Asistencia: entrada/salida, tardanza automática, ausencias (RRHH), filtros por fecha
+- Planillas mensuales: horas extras, bonos, descuentos, AFP, impuestos, **neto**; **boleta PDF**
+- Reportes: exportación **Excel** y **PDF** (empleados, asistencia, planillas, salarios)
+- Notificaciones in-app + correo opcional (**Nodemailer** + variables SMTP)
+- UI responsive, sidebar tipo admin, **modo oscuro**, spinners y confirmaciones
 
 ## Estructura
 
 ```
-yatusabe/
-├── backend/          # API REST
-│   └── src/
-│       ├── routes/
-│       ├── controllers/
-│       ├── middlewares/
-│       ├── prisma/   # Cliente Prisma
-│       └── app.js
-├── frontend/         # SPA React
-│   └── src/
-│       ├── pages/
-│       ├── components/
-│       ├── services/
-│       └── context/
-└── README.md
+backend/src/
+  config/ controllers/ db/ middlewares/ routes/ services/ utils/ app.js seed.js
+frontend/src/
+  components/ context/ hooks/ layouts/ pages/ routes/ services/ utils/
 ```
 
-## Instalación y ejecución
+## Requisitos
 
-### 1. Backend
+- Node.js 18+
+
+## Variables de entorno
+
+Copia `backend/.env.example` → `backend/.env` y ajusta valores.
+
+| Variable | Descripción |
+|----------|-------------|
+| `PORT` | Puerto API (default 5000) |
+| `JWT_SECRET` | Secreto firma JWT |
+| `DATABASE_PATH` | Ruta archivo SQLite |
+| `CORS_ORIGIN` | Origen del frontend |
+| `UPLOAD_DIR` | Carpeta de fotos |
+| `ATTENDANCE_EXPECTED_TIME` | Hora esperada de entrada `HH:mm` |
+| `ATTENDANCE_GRACE_MINUTES` | Gracia antes de marcar tardanza |
+| `SMTP_*` | Opcional, para envío real de correos |
+
+Frontend opcional: `frontend/.env` con `VITE_API_URL=http://localhost:5000/api` si no usas proxy de Vite.
+
+## Instalación
+
+### Backend
 
 ```bash
 cd backend
 cp .env.example .env
 npm install
-npx prisma generate
-npx prisma db push
-npm run db:seed
+npm run seed
 npm run dev
 ```
 
-La API queda en `http://localhost:5000`. Variables en `.env`:
-
-- `DATABASE_URL` — ruta al archivo SQLite (por defecto `file:./dev.db`)
-- `JWT_SECRET` — secreto para firmar tokens (cámbialo en producción)
-- `PORT` — puerto del servidor (opcional, por defecto 5000)
-
-### 2. Frontend
-
-En otra terminal:
+### Frontend
 
 ```bash
 cd frontend
@@ -57,30 +63,69 @@ npm install
 npm run dev
 ```
 
-La app abre en `http://localhost:5173`. El proxy de Vite reenvía `/api` al backend en el puerto 5000.
+Abre `http://localhost:5173`. El proxy reenvía `/api` y `/uploads` al puerto 5000.
 
-## Credenciales de prueba (seed)
+## Usuarios de demostración (seed)
 
-Tras `npm run db:seed`:
+Tras `npm run seed` en `backend`:
 
-- **Email:** `admin@empresa.com`
-- **Contraseña:** `admin123`
+| Rol | Email | Contraseña |
+|-----|-------|------------|
+| ADMIN | admin@empresa.demo | Admin123! |
+| RRHH | rrhh@empresa.demo | Rrhh123! |
+| EMPLEADO | empleado@empresa.demo | Emp123! |
 
-## Endpoints principales
+> Si ya registraste un usuario desde la UI, el seed detecta datos existentes y no sobrescribe. Borra `backend/data/empresa.db` para reiniciar.
 
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/auth/login` | Login (email, password) → JWT |
-| GET | `/api/empleados` | Listar / buscar (`?q=texto`) — requiere Bearer token |
-| POST | `/api/empleados` | Crear — requiere token |
-| PUT | `/api/empleados/:id` | Actualizar — requiere token |
-| DELETE | `/api/empleados/:id` | Eliminar — requiere token |
-| GET | `/api/planillas` | Listar — requiere token |
-| POST | `/api/planillas` | Generar planilla — requiere token |
+## Ejemplos de consumo API (curl)
 
-**Planilla:** el sueldo neto se calcula en el servidor como `salarioBase - descuento + bono`.
+**Login**
+
+```bash
+curl -s -X POST http://localhost:5000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"admin@empresa.demo\",\"password\":\"Admin123!\"}"
+```
+
+**Listar empleados (paginado)**
+
+```bash
+curl -s http://localhost:5000/api/empleados?page=1&limit=10 \
+  -H "Authorization: Bearer TU_TOKEN"
+```
+
+**Registrar entrada**
+
+```bash
+curl -s -X POST http://localhost:5000/api/asistencia/entrada \
+  -H "Authorization: Bearer TU_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"empleadoId\":\"UUID_OPCIONAL_SOLO_RRHH\"}"
+```
+
+**Crear planilla**
+
+```bash
+curl -s -X POST http://localhost:5000/api/planillas \
+  -H "Authorization: Bearer TU_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"empleadoId\":\"...\",\"periodo\":\"2025-05\",\"salarioBase\":5000,\"horasExtras\":4,\"tarifaHoraExtra\":25,\"bonos\":200,\"descuentos\":100,\"afp\":450,\"impuestos\":120}"
+```
+
+**Descargar boleta PDF**
+
+```bash
+curl -f -o boleta.pdf http://localhost:5000/api/planillas/ID/boleta \
+  -H "Authorization: Bearer TU_TOKEN"
+```
 
 ## Producción
 
-- Backend: `npm start` (tras definir `NODE_ENV` y un `JWT_SECRET` seguro).
-- Frontend: `npm run build` y servir la carpeta `frontend/dist` con un servidor estático o integrar con Express.
+- Backend: `npm start`
+- Frontend: `npm run build` y servir `frontend/dist`; configurar CORS y `VITE_API_URL` según el dominio.
+
+## Notas técnicas
+
+- Persistencia: **better-sqlite3** + esquema en `backend/src/db/schema.sql`
+- PDF: `pdfkit`; Excel: `exceljs`
+- Contraseñas: `bcryptjs`

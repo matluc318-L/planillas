@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import * as authApi from "../services/auth.api.js";
 
 const AuthContext = createContext(null);
 
@@ -9,11 +10,22 @@ export function AuthProvider({ children }) {
     return raw ? JSON.parse(raw) : null;
   });
 
-  const login = useCallback((newToken, newUser) => {
-    localStorage.setItem("token", newToken);
-    localStorage.setItem("user", JSON.stringify(newUser));
-    setToken(newToken);
-    setUser(newUser);
+  const login = useCallback(async (usuario, password) => {
+    const data = await authApi.login({ usuario, password });
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("user", JSON.stringify(data.user));
+    setToken(data.token);
+    setUser(data.user);
+    return data.user;
+  }, []);
+
+  const register = useCallback(async (email, password) => {
+    const data = await authApi.register({ email, password });
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("user", JSON.stringify(data.user));
+    setToken(data.token);
+    setUser(data.user);
+    return data.user;
   }, []);
 
   const logout = useCallback(() => {
@@ -23,15 +35,30 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  const refreshMe = useCallback(async () => {
+    if (!token) return null;
+    try {
+      const me = await authApi.me();
+      localStorage.setItem("user", JSON.stringify(me));
+      setUser(me);
+      return me;
+    } catch {
+      logout();
+      return null;
+    }
+  }, [token, logout]);
+
   const value = useMemo(
     () => ({
       token,
       user,
       isAuthenticated: Boolean(token),
       login,
+      register,
       logout,
+      refreshMe,
     }),
-    [token, user, login, logout]
+    [token, user, login, register, logout, refreshMe]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -39,8 +66,6 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth debe usarse dentro de AuthProvider");
-  }
+  if (!ctx) throw new Error("useAuth fuera de AuthProvider");
   return ctx;
 }

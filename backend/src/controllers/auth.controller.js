@@ -1,37 +1,16 @@
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { prisma } from "../prisma/client.js";
+import * as authService from "../services/auth.service.js";
 
 export async function login(req, res) {
-  try {
-    const { email, password } = req.body;
+  const data = await authService.login(req.body);
+  res.json(data);
+}
 
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email y contraseña son obligatorios" });
-    }
+export async function register(req, res) {
+  const data = await authService.register(req.body);
+  res.status(201).json(data);
+}
 
-    const user = await prisma.usuario.findUnique({ where: { email: String(email).trim() } });
-    if (!user) {
-      return res.status(401).json({ error: "Credenciales incorrectas" });
-    }
-
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) {
-      return res.status(401).json({ error: "Credenciales incorrectas" });
-    }
-
-    const token = jwt.sign(
-      { sub: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: "8h" }
-    );
-
-    return res.json({
-      token,
-      user: { id: user.id, email: user.email },
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Error al iniciar sesión" });
-  }
+export async function me(req, res) {
+  const user = await authService.getMe(req.user.id);
+  res.json(user);
 }

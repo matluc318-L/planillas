@@ -1,111 +1,134 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useAuth } from "../context/AuthContext.jsx";
+import { useDebounce } from "../hooks/useDebounce.js";
+import * as empleadosApi from "../services/empleados.api.js";
+import * as catalogosApi from "../services/catalogos.api.js";
 import Modal from "../components/Modal.jsx";
-import * as empleadoService from "../services/empleado.service.js";
+import PaginationBar from "../components/PaginationBar.jsx";
+import Spinner from "../components/Spinner.jsx";
 
-const emptyForm = {
-  nombre: "",
-  apellido: "",
+const empty = {
+  nombres: "",
+  apellidos: "",
   dni: "",
   correo: "",
   telefono: "",
-  cargo: "",
+  direccion: "",
+  cargoId: "",
+  areaId: "",
   salario: "",
   fechaIngreso: "",
-  activo: true,
+  estado: "ACTIVO",
 };
 
-function toInputDate(iso) {
-  if (!iso) return "";
-  return String(iso).slice(0, 10);
-}
-
 export default function Empleados() {
-  const [list, setList] = useState([]);
+  const { user } = useAuth();
+  const canEdit = user?.rol === "ADMIN" || user?.rol === "RRHH";
+
   const [q, setQ] = useState("");
+  const dq = useDebounce(q, 300);
+  const [areaId, setAreaId] = useState("");
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [areas, setAreas] = useState([]);
+  const [cargos, setCargos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
+  const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(empty);
+  const [foto, setFoto] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [delTarget, setDelTarget] = useState(null);
 
-  async function refresh(search) {
-    setError("");
+  const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const data = await empleadoService.getEmpleados(search || undefined);
-      setList(data);
-    } catch (err) {
-      setError(err.response?.data?.error || "Error al cargar empleados");
+      const res = await empleadosApi.listEmpleados({
+        q: dq || undefined,
+        areaId: areaId || undefined,
+        page,
+        limit: 10,
+      });
+      setData(res.data || []);
+      setMeta(res.meta || null);
+    } catch (e) {
+      setError(e.response?.data?.error || "Error al cargar empleados");
     } finally {
       setLoading(false);
     }
-  }
+  }, [dq, areaId, page]);
 
   useEffect(() => {
-    const term = q.trim() || undefined;
-    const delay = q.trim() === "" ? 0 : 300;
-    const t = setTimeout(() => refresh(term), delay);
-    return () => clearTimeout(t);
-  }, [q]);
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    catalogosApi.getAreas().then(setAreas);
+  }, []);
+
+  useEffect(() => {
+    catalogosApi.getCargos(form.areaId || undefined).then(setCargos);
+  }, [form.areaId, modal]);
 
   function openCreate() {
     setEditing(null);
-    setForm(emptyForm);
-    setModalOpen(true);
+    setForm(empty);
+    setFoto(null);
+    setModal(true);
   }
 
-  function openEdit(emp) {
-    setEditing(emp);
+  function openEdit(row) {
+    setEditing(row);
     setForm({
-      nombre: emp.nombre,
-      apellido: emp.apellido,
-      dni: emp.dni,
-      correo: emp.correo,
-      telefono: emp.telefono,
-      cargo: emp.cargo,
-      salario: String(emp.salario),
-      fechaIngreso: toInputDate(emp.fechaIngreso),
-      activo: emp.activo,
+      nombres: row.nombres,
+      apellidos: row.apellidos,
+      dni: row.dni,
+      correo: row.correo,
+      telefono: row.telefono,
+      direccion: row.direccion || "",
+      cargoId: row.cargoId || "",
+      areaId: row.areaId || "",
+      salario: String(row.salario),
+      fechaIngreso: String(row.fechaIngreso).slice(0, 10),
+      estado: row.estado,
     });
-    setModalOpen(true);
+    setFoto(null);
+    setModal(true);
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function save() {
     setSaving(true);
     setError("");
     try {
-      const payload = {
-        ...form,
-        salario: Number(form.salario),
-        fechaIngreso: form.fechaIngreso,
-      };
+      const payload = { ...form, salario: form.salario, cargoId: form.cargoId || null, areaId: form.areaId || null };
       if (editing) {
-        await empleadoService.updateEmpleado(editing.id, payload);
+        await empleadosApi.updateEmpleado(editing.id, payload, foto || undefined);
       } else {
-        await empleadoService.createEmpleado(payload);
+        await empleadosApi.createEmpleado(payload, foto || undefined);
       }
-      setModalOpen(false);
-      await refresh(q.trim() || undefined);
-    } catch (err) {
-      setError(err.response?.data?.error || "No se pudo guardar");
+      setModal(false);
+      await load();
+    } catch (e) {
+      setError(e.response?.data?.error || "No se pudo guardar");
     } finally {
       setSaving(false);
     }
   }
 
   async function confirmDelete() {
-    if (!deleteTarget) return;
+    if (!delTarget) return;
     setSaving(true);
     setError("");
     try {
-      await empleadoService.deleteEmpleado(deleteTarget.id);
-      setDeleteTarget(null);
-      await refresh(q.trim() || undefined);
-    } catch (err) {
-      setError(err.response?.data?.error || "No se pudo eliminar");
+      await empleadosApi.deleteEmpleado(delTarget.id);
+      setDelTarget(null);
+      await load();
+    } catch (e) {
+      setError(e.response?.data?.error || "No se pudo eliminar");
     } finally {
       setSaving(false);
     }
@@ -113,104 +136,110 @@ export default function Empleados() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900">Empleados</h1>
-          <p className="text-slate-600 mt-1">Administra el personal de la empresa</p>
+          <h1 className="text-2xl md:text-3xl font-bold">Empleados</h1>
+          <p className="text-slate-600 dark:text-slate-400 mt-1">Directorio y expedientes</p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-brand-700"
-        >
-          Nuevo empleado
-        </button>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white"
+          >
+            Nuevo empleado
+          </button>
+        ) : null}
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <input
-          type="search"
-          placeholder="Buscar por nombre, DNI, correo, cargo…"
+          placeholder="Buscar…"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="w-full sm:max-w-md rounded-xl border border-slate-200 px-3 py-2.5 text-sm shadow-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
+          onChange={(e) => {
+            setPage(1);
+            setQ(e.target.value);
+          }}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
         />
+        <select
+          value={areaId}
+          onChange={(e) => {
+            setPage(1);
+            setAreaId(e.target.value);
+          }}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+        >
+          <option value="">Todas las áreas</option>
+          {areas.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.nombre}
+            </option>
+          ))}
+        </select>
       </div>
 
       {error ? (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+        <p className="text-sm text-red-600 bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900 rounded-xl px-4 py-3">
           {error}
         </p>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
         {loading ? (
-          <p className="p-8 text-slate-500 text-center">Cargando…</p>
+          <Spinner />
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-600">
+              <thead className="bg-slate-50 dark:bg-slate-800/80 text-left">
                 <tr>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Nombre</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">DNI</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Correo</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Cargo</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Salario</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Ingreso</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Estado</th>
-                  <th className="px-4 py-3 font-medium text-right whitespace-nowrap">Acciones</th>
+                  <th className="px-4 py-3">Nombre</th>
+                  <th className="px-4 py-3">DNI</th>
+                  <th className="px-4 py-3">Área</th>
+                  <th className="px-4 py-3">Cargo</th>
+                  <th className="px-4 py-3">Salario</th>
+                  <th className="px-4 py-3">Estado</th>
+                  <th className="px-4 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {list.length === 0 ? (
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {data.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
-                      No hay resultados.
+                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                      Sin resultados
                     </td>
                   </tr>
                 ) : (
-                  list.map((emp) => (
-                    <tr key={emp.id} className="hover:bg-slate-50/80">
-                      <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">
-                        {emp.nombre} {emp.apellido}
+                  data.map((e) => (
+                    <tr key={e.id}>
+                      <td className="px-4 py-3 font-medium">
+                        <Link to={`/app/empleados/${e.id}`} className="text-brand-600 hover:underline">
+                          {e.nombres} {e.apellidos}
+                        </Link>
                       </td>
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{emp.dni}</td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[200px] truncate">
-                        {emp.correo}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{emp.cargo}</td>
-                      <td className="px-4 py-3 tabular-nums text-slate-700 whitespace-nowrap">
-                        S/ {Number(emp.salario).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                        {toInputDate(emp.fechaIngreso)}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span
-                          className={
-                            emp.activo
-                              ? "inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
-                              : "inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"
-                          }
-                        >
-                          {emp.activo ? "Activo" : "Inactivo"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(emp)}
-                          className="text-brand-600 hover:text-brand-700 font-medium"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(emp)}
-                          className="text-red-600 hover:text-red-700 font-medium"
-                        >
-                          Eliminar
-                        </button>
+                      <td className="px-4 py-3">{e.dni}</td>
+                      <td className="px-4 py-3">{e.areaNombre || "—"}</td>
+                      <td className="px-4 py-3">{e.cargoNombre || "—"}</td>
+                      <td className="px-4 py-3 tabular-nums">S/ {Number(e.salario).toFixed(2)}</td>
+                      <td className="px-4 py-3">{e.estado}</td>
+                      <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
+                        <Link to={`/app/empleados/${e.id}`} className="text-brand-600 font-medium">
+                          Ver
+                        </Link>
+                        {canEdit ? (
+                          <>
+                            <button type="button" className="text-brand-600 font-medium" onClick={() => openEdit(e)}>
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              className="text-red-600 font-medium"
+                              onClick={() => setDelTarget(e)}
+                            >
+                              Eliminar
+                            </button>
+                          </>
+                        ) : null}
                       </td>
                     </tr>
                   ))
@@ -219,137 +248,150 @@ export default function Empleados() {
             </table>
           </div>
         )}
+        <div className="p-4 border-t border-slate-100 dark:border-slate-800">
+          <PaginationBar meta={meta} onChange={setPage} />
+        </div>
       </div>
 
       <Modal
-        open={modalOpen}
-        onClose={() => !saving && setModalOpen(false)}
+        open={modal}
+        onClose={() => !saving && setModal(false)}
         title={editing ? "Editar empleado" : "Nuevo empleado"}
         footer={
           <div className="flex justify-end gap-2">
             <button
               type="button"
               disabled={saving}
-              onClick={() => setModalOpen(false)}
-              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-white"
+              onClick={() => setModal(false)}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm dark:border-slate-700"
             >
               Cancelar
             </button>
             <button
-              type="submit"
-              form="empleado-form"
+              type="button"
               disabled={saving}
-              className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+              onClick={save}
+              className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
             >
               {saving ? "Guardando…" : "Guardar"}
             </button>
           </div>
         }
       >
-        <form id="empleado-form" onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">Nombre</label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+          {[
+            ["nombres", "Nombres"],
+            ["apellidos", "Apellidos"],
+            ["dni", "DNI"],
+            ["correo", "Correo"],
+            ["telefono", "Teléfono"],
+          ].map(([k, label]) => (
+            <div key={k}>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400">{label}</label>
+              <input
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form[k]}
+                onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+                required
+              />
+            </div>
+          ))}
+          <div className="sm:col-span-2">
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Dirección</label>
             <input
-              required
-              value={form.nombre}
-              onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              value={form.direccion}
+              onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))}
             />
           </div>
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">Apellido</label>
-            <input
-              required
-              value={form.apellido}
-              onChange={(e) => setForm((f) => ({ ...f, apellido: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
+          <div>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Área</label>
+            <select
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              value={form.areaId}
+              onChange={(e) => setForm((f) => ({ ...f, areaId: e.target.value, cargoId: "" }))}
+            >
+              <option value="">—</option>
+              {areas.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.nombre}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">DNI</label>
-            <input
-              required
-              value={form.dni}
-              onChange={(e) => setForm((f) => ({ ...f, dni: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
+          <div>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Cargo</label>
+            <select
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              value={form.cargoId}
+              onChange={(e) => setForm((f) => ({ ...f, cargoId: e.target.value }))}
+            >
+              <option value="">—</option>
+              {cargos.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">Correo</label>
-            <input
-              type="email"
-              required
-              value={form.correo}
-              onChange={(e) => setForm((f) => ({ ...f, correo: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
-          </div>
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">Teléfono</label>
-            <input
-              required
-              value={form.telefono}
-              onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
-          </div>
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">Cargo</label>
-            <input
-              required
-              value={form.cargo}
-              onChange={(e) => setForm((f) => ({ ...f, cargo: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
-          </div>
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">Salario</label>
+          <div>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Salario</label>
             <input
               type="number"
-              min="0"
               step="0.01"
-              required
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
               value={form.salario}
               onChange={(e) => setForm((f) => ({ ...f, salario: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              required
             />
           </div>
-          <div className="sm:col-span-1">
-            <label className="block text-xs font-medium text-slate-600">Fecha de ingreso</label>
+          <div>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Fecha ingreso</label>
             <input
               type="date"
-              required
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
               value={form.fechaIngreso}
               onChange={(e) => setForm((f) => ({ ...f, fechaIngreso: e.target.value }))}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              required
             />
           </div>
-          <div className="sm:col-span-2 flex items-center gap-2">
+          <div>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Estado</label>
+            <select
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              value={form.estado}
+              onChange={(e) => setForm((f) => ({ ...f, estado: e.target.value }))}
+            >
+              {["ACTIVO", "INACTIVO", "SUSPENDIDO"].map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Foto (JPG/PNG)</label>
             <input
-              id="activo"
-              type="checkbox"
-              checked={form.activo}
-              onChange={(e) => setForm((f) => ({ ...f, activo: e.target.checked }))}
-              className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+              type="file"
+              accept="image/*"
+              className="mt-1 w-full text-sm"
+              onChange={(e) => setFoto(e.target.files?.[0] || null)}
             />
-            <label htmlFor="activo" className="text-sm text-slate-700">
-              Empleado activo
-            </label>
           </div>
-        </form>
+        </div>
       </Modal>
 
       <Modal
-        open={Boolean(deleteTarget)}
-        onClose={() => !saving && setDeleteTarget(null)}
+        open={Boolean(delTarget)}
+        onClose={() => !saving && setDelTarget(null)}
         title="Eliminar empleado"
         footer={
           <div className="flex justify-end gap-2">
             <button
               type="button"
               disabled={saving}
-              onClick={() => setDeleteTarget(null)}
-              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-white"
+              onClick={() => setDelTarget(null)}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm dark:border-slate-700"
             >
               Cancelar
             </button>
@@ -357,19 +399,15 @@ export default function Empleados() {
               type="button"
               disabled={saving}
               onClick={confirmDelete}
-              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white"
             >
-              {saving ? "Eliminando…" : "Eliminar"}
+              Eliminar
             </button>
           </div>
         }
       >
-        <p className="text-sm text-slate-600">
-          ¿Seguro que deseas eliminar a{" "}
-          <span className="font-semibold text-slate-900">
-            {deleteTarget?.nombre} {deleteTarget?.apellido}
-          </span>
-          ? Esta acción no se puede deshacer.
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          ¿Eliminar a {delTarget?.nombres} {delTarget?.apellidos}? Esta acción no se puede deshacer.
         </p>
       </Modal>
     </div>

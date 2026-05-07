@@ -1,8 +1,12 @@
 import { Router } from "express";
-import { login } from "../controllers/auth.controller.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import * as authController from "../controllers/auth.controller.js";
+import { requireAuth } from "../middlewares/auth.middleware.js";
 
-const router = Router();
+const r = Router();
 
-router.post("/login", login);
+r.post("/login", asyncHandler(authController.login));
+r.post("/register", asyncHandler(authController.register));
+r.get("/me", requireAuth, asyncHandler(authController.me));
 
-export default router;
+export default r;

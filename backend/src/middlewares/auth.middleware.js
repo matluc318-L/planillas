@@ -1,17 +1,23 @@
 import jwt from "jsonwebtoken";
+import { env } from "../config/env.js";
+import { HttpError } from "../utils/httpError.js";
 
-export function requireAuth(req, res, next) {
+export function requireAuth(req, _res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token no proporcionado" });
+    return next(new HttpError(401, "Token no proporcionado"));
   }
-
   const token = header.slice(7);
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload;
+    const payload = jwt.verify(token, env.jwtSecret);
+    req.user = {
+      id: payload.sub,
+      rol: payload.rol,
+      empleadoId: payload.empleadoId || null,
+      ownerAdminId: payload.ownerAdminId || null,
+    };
     next();
   } catch {
-    return res.status(401).json({ error: "Token inválido o expirado" });
+    next(new HttpError(401, "Token inválido o expirado"));
   }
 }

@@ -1,19 +1,31 @@
 import { Router } from "express";
-import {
-  listEmpleados,
-  createEmpleado,
-  updateEmpleado,
-  deleteEmpleado,
-} from "../controllers/empleado.controller.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 import { requireAuth } from "../middlewares/auth.middleware.js";
+import { requireRoles } from "../middlewares/roles.middleware.js";
+import { uploadFotoEmpleado } from "../middlewares/upload.middleware.js";
+import * as empleadoController from "../controllers/empleado.controller.js";
 
-const router = Router();
+const r = Router();
 
-router.use(requireAuth);
+r.use(requireAuth);
 
-router.get("/", listEmpleados);
-router.post("/", createEmpleado);
-router.put("/:id", updateEmpleado);
-router.delete("/:id", deleteEmpleado);
+r.get("/", asyncHandler(empleadoController.list));
+r.get("/:id", asyncHandler(empleadoController.getOne));
 
-export default router;
+r.post(
+  "/",
+  requireRoles("ADMIN", "RRHH"),
+  uploadFotoEmpleado.single("foto"),
+  asyncHandler(empleadoController.create)
+);
+
+r.put(
+  "/:id",
+  requireRoles("ADMIN", "RRHH"),
+  uploadFotoEmpleado.single("foto"),
+  asyncHandler(empleadoController.update)
+);
+
+r.delete("/:id", requireRoles("ADMIN", "RRHH"), asyncHandler(empleadoController.remove));
+
+export default r;

@@ -1,12 +1,17 @@
 import { Router } from "express";
-import { listPlanillas, createPlanilla } from "../controllers/planilla.controller.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 import { requireAuth } from "../middlewares/auth.middleware.js";
+import { requireRoles } from "../middlewares/roles.middleware.js";
+import { requirePlanillaAccess } from "../middlewares/planillaAccess.middleware.js";
+import * as planillaController from "../controllers/planilla.controller.js";
 
-const router = Router();
+const r = Router();
 
-router.use(requireAuth);
+r.use(requireAuth);
 
-router.get("/", listPlanillas);
-router.post("/", createPlanilla);
+// ADMIN/RRHH: ver todo. EMPLEADO: solo si tiene acceso vigente (si aplica).
+r.get("/", asyncHandler(requirePlanillaAccess), asyncHandler(planillaController.list));
+r.post("/", requireRoles("ADMIN", "RRHH"), asyncHandler(planillaController.create));
+r.get("/:id/boleta", asyncHandler(requirePlanillaAccess), asyncHandler(planillaController.boletaPdf));
 
-export default router;
+export default r;

@@ -1,42 +1,59 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "../context/AuthContext.jsx";
+import * as planillasApi from "../services/planillas.api.js";
+import * as empleadosApi from "../services/empleados.api.js";
 import Modal from "../components/Modal.jsx";
-import * as empleadoService from "../services/empleado.service.js";
-import * as planillaService from "../services/planilla.service.js";
+import Spinner from "../components/Spinner.jsx";
+import { downloadBlob } from "../utils/download.js";
 
-function calcPreview(base, desc, bono) {
-  const b = Number(base) || 0;
-  const d = Number(desc) || 0;
-  const bo = Number(bono) || 0;
-  if (Number.isNaN(b) || Number.isNaN(d) || Number.isNaN(bo)) return null;
-  return Math.round((b - d + bo) * 100) / 100;
+function calcPreview(f) {
+  const base = Number(f.salarioBase) || 0;
+  const he = Number(f.horasExtras) || 0;
+  const th = Number(f.tarifaHoraExtra) || 0;
+  const bon = Number(f.bonos) || 0;
+  const des = Number(f.descuentos) || 0;
+  const afp = Number(f.afp) || 0;
+  const imp = Number(f.impuestos) || 0;
+  const bruto = base + bon + he * th;
+  const neto = Math.round((bruto - des - afp - imp) * 100) / 100;
+  return { bruto: Math.round(bruto * 100) / 100, neto };
 }
 
 export default function Planillas() {
-  const [planillas, setPlanillas] = useState([]);
+  const { user } = useAuth();
+  const canCreate = user?.rol === "ADMIN" || user?.rol === "RRHH";
+  const [rows, setRows] = useState([]);
   const [empleados, setEmpleados] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
+  const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     empleadoId: "",
+    periodo: "",
     salarioBase: "",
-    descuento: "0",
-    bono: "0",
+    horasExtras: "0",
+    tarifaHoraExtra: "0",
+    bonos: "0",
+    descuentos: "0",
+    afp: "0",
+    impuestos: "0",
   });
 
+  const preview = useMemo(() => calcPreview(form), [form]);
+
   async function load() {
-    setError("");
     setLoading(true);
+    setError("");
     try {
       const [p, e] = await Promise.all([
-        planillaService.getPlanillas(),
-        empleadoService.getEmpleados(),
+        planillasApi.listPlanillas({}),
+        empleadosApi.listEmpleados({ limit: 500, estado: "ACTIVO" }).catch(() => ({ data: [] })),
       ]);
-      setPlanillas(p);
-      setEmpleados(e.filter((x) => x.activo));
-    } catch (err) {
-      setError(err.response?.data?.error || "Error al cargar planillas");
+      setRows(p);
+      setEmpleados(e.data || []);
+    } catch (e) {
+      setError(e.response?.data?.error || "Error al cargar planillas");
     } finally {
       setLoading(false);
     }
@@ -46,17 +63,7 @@ export default function Planillas() {
     load();
   }, []);
 
-  const preview = useMemo(
-    () => calcPreview(form.salarioBase, form.descuento, form.bono),
-    [form.salarioBase, form.descuento, form.bono]
-  );
-
-  function openModal() {
-    setForm({ empleadoId: "", salarioBase: "", descuento: "0", bono: "0" });
-    setModalOpen(true);
-  }
-
-  function onSelectEmpleado(id) {
+  function onPickEmp(id) {
     const emp = empleados.find((x) => x.id === id);
     setForm((f) => ({
       ...f,
@@ -65,96 +72,115 @@ export default function Planillas() {
     }));
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function save() {
     setSaving(true);
     setError("");
     try {
-      await planillaService.createPlanilla({
+      await planillasApi.createPlanilla({
         empleadoId: form.empleadoId,
+        periodo: form.periodo,
         salarioBase: Number(form.salarioBase),
-        descuento: Number(form.descuento) || 0,
-        bono: Number(form.bono) || 0,
+        horasExtras: Number(form.horasExtras),
+        tarifaHoraExtra: Number(form.tarifaHoraExtra),
+        bonos: Number(form.bonos),
+        descuentos: Number(form.descuentos),
+        afp: Number(form.afp),
+        impuestos: Number(form.impuestos),
       });
-      setModalOpen(false);
+      setModal(false);
       await load();
-    } catch (err) {
-      setError(err.response?.data?.error || "No se pudo generar la planilla");
+    } catch (e) {
+      setError(e.response?.data?.error || "No se pudo crear la planilla");
     } finally {
       setSaving(false);
     }
   }
 
+  async function descargar(id) {
+    const blob = await planillasApi.downloadBoleta(id);
+    downloadBlob(blob, `boleta-${id}.pdf`);
+  }
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900">Planillas</h1>
-          <p className="text-slate-600 mt-1">
-            Genera planillas con salario base, descuentos y bonos
+          <h1 className="text-2xl md:text-3xl font-bold">Planillas</h1>
+          <p className="text-slate-600 dark:text-slate-400 mt-1">
+            Cálculo de neto con horas extras, AFP e impuestos
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openModal}
-          className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-brand-700"
-        >
-          Generar planilla
-        </button>
+        {canCreate ? (
+          <button
+            type="button"
+            onClick={() => {
+              setForm({
+                empleadoId: "",
+                periodo: "",
+                salarioBase: "",
+                horasExtras: "0",
+                tarifaHoraExtra: "0",
+                bonos: "0",
+                descuentos: "0",
+                afp: "0",
+                impuestos: "0",
+              });
+              setModal(true);
+            }}
+            className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white"
+          >
+            Nueva planilla
+          </button>
+        ) : null}
       </div>
 
       {error ? (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+        <p className="text-sm text-red-600 bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900 rounded-xl px-4 py-3">
           {error}
         </p>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
         {loading ? (
-          <p className="p-8 text-slate-500 text-center">Cargando…</p>
+          <Spinner />
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-600">
+              <thead className="bg-slate-50 dark:bg-slate-800/80 text-left">
                 <tr>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Empleado</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Salario base</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Descuento</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Bono</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Sueldo neto</th>
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Fecha</th>
+                  <th className="px-4 py-3">Periodo</th>
+                  <th className="px-4 py-3">Empleado</th>
+                  <th className="px-4 py-3">Base</th>
+                  <th className="px-4 py-3">Neto</th>
+                  <th className="px-4 py-3 text-right">Boleta</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {planillas.length === 0 ? (
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
-                      Aún no hay planillas registradas.
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                      Sin planillas
                     </td>
                   </tr>
                 ) : (
-                  planillas.map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-50/80">
-                      <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">
-                        {p.empleado.nombre} {p.empleado.apellido}
-                        <span className="block text-xs font-normal text-slate-500">
-                          {p.empleado.cargo}
-                        </span>
+                  rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="px-4 py-3 font-mono">{r.periodo}</td>
+                      <td className="px-4 py-3">
+                        {r.nombres} {r.apellidos}
                       </td>
-                      <td className="px-4 py-3 tabular-nums text-slate-700 whitespace-nowrap">
-                        S/ {Number(p.salarioBase).toFixed(2)}
+                      <td className="px-4 py-3 tabular-nums">S/ {Number(r.salarioBase).toFixed(2)}</td>
+                      <td className="px-4 py-3 tabular-nums font-semibold text-emerald-600">
+                        S/ {Number(r.neto).toFixed(2)}
                       </td>
-                      <td className="px-4 py-3 tabular-nums text-slate-700 whitespace-nowrap">
-                        S/ {Number(p.descuento).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-slate-700 whitespace-nowrap">
-                        S/ {Number(p.bono).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums font-semibold text-emerald-700 whitespace-nowrap">
-                        S/ {Number(p.sueldoFinal).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                        {new Date(p.createdAt).toLocaleString("es-PE")}
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => descargar(r.id)}
+                          className="text-brand-600 font-medium"
+                        >
+                          PDF
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -166,95 +192,139 @@ export default function Planillas() {
       </div>
 
       <Modal
-        open={modalOpen}
-        onClose={() => !saving && setModalOpen(false)}
-        title="Generar planilla"
+        open={modal}
+        onClose={() => !saving && setModal(false)}
+        title="Nueva planilla mensual"
         footer={
           <div className="flex justify-end gap-2">
             <button
               type="button"
               disabled={saving}
-              onClick={() => setModalOpen(false)}
-              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-white"
+              onClick={() => setModal(false)}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm dark:border-slate-700"
             >
               Cancelar
             </button>
             <button
-              type="submit"
-              form="planilla-form"
+              type="button"
               disabled={saving}
-              className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+              onClick={save}
+              className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
             >
-              {saving ? "Guardando…" : "Guardar planilla"}
+              Guardar
             </button>
           </div>
         }
       >
-        <form id="planilla-form" onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-slate-600">Empleado</label>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Empleado</label>
             <select
               required
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
               value={form.empleadoId}
-              onChange={(e) => onSelectEmpleado(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white"
+              onChange={(e) => onPickEmp(e.target.value)}
             >
-              <option value="">Selecciona un empleado activo</option>
+              <option value="">Selecciona</option>
               {empleados.map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.nombre} {e.apellido} — {e.cargo}
+                  {e.nombres} {e.apellidos}
                 </option>
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-600">Salario base</label>
+              <label className="text-xs font-medium">Periodo (YYYY-MM)</label>
+              <input
+                required
+                placeholder="2025-05"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form.periodo}
+                onChange={(e) => setForm((f) => ({ ...f, periodo: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Salario base</label>
               <input
                 type="number"
-                min="0"
                 step="0.01"
                 required
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                 value={form.salarioBase}
                 onChange={(e) => setForm((f) => ({ ...f, salarioBase: e.target.value }))}
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600">Descuento</label>
+              <label className="text-xs font-medium">Horas extras</label>
               <input
                 type="number"
-                min="0"
-                step="0.01"
-                value={form.descuento}
-                onChange={(e) => setForm((f) => ({ ...f, descuento: e.target.value }))}
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                step="0.25"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form.horasExtras}
+                onChange={(e) => setForm((f) => ({ ...f, horasExtras: e.target.value }))}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600">Bono</label>
+              <label className="text-xs font-medium">Tarifa hora extra</label>
               <input
                 type="number"
-                min="0"
                 step="0.01"
-                value={form.bono}
-                onChange={(e) => setForm((f) => ({ ...f, bono: e.target.value }))}
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form.tarifaHoraExtra}
+                onChange={(e) => setForm((f) => ({ ...f, tarifaHoraExtra: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Bonos</label>
+              <input
+                type="number"
+                step="0.01"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form.bonos}
+                onChange={(e) => setForm((f) => ({ ...f, bonos: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Descuentos</label>
+              <input
+                type="number"
+                step="0.01"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form.descuentos}
+                onChange={(e) => setForm((f) => ({ ...f, descuentos: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium">AFP (monto)</label>
+              <input
+                type="number"
+                step="0.01"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form.afp}
+                onChange={(e) => setForm((f) => ({ ...f, afp: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Impuestos (monto)</label>
+              <input
+                type="number"
+                step="0.01"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={form.impuestos}
+                onChange={(e) => setForm((f) => ({ ...f, impuestos: e.target.value }))}
               />
             </div>
           </div>
-          <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-              Vista previa sueldo neto
+          <div className="rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 p-3 text-sm">
+            <p className="text-slate-600 dark:text-slate-300">
+              Bruto estimado: <span className="font-semibold">S/ {preview.bruto.toFixed(2)}</span>
             </p>
-            <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums">
-              {preview === null ? "—" : `S/ ${preview.toFixed(2)}`}
-            </p>
-            <p className="text-xs text-slate-500 mt-1">
-              Fórmula: salario base − descuento + bono
+            <p className="text-slate-800 dark:text-slate-100 mt-1 text-lg font-bold">
+              Neto a pagar: S/ {preview.neto.toFixed(2)}
             </p>
           </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );
