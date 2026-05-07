@@ -5,9 +5,6 @@ on:
     branches: ["master"]
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 permissions:
   contents: read
   pages: write
@@ -42,7 +39,7 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_URL: https://proyecto-3yod.onrender.com/api
-        run: npm run build -- --base=/planillas/
+        run: npm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
