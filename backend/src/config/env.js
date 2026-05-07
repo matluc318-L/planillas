@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 export const env = {
-  port: Number(process.env.PORT) || 5000,
+  port: Number(process.env.PORT) || 4000,
   jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me-in-production-min-32",
   databasePath: process.env.DATABASE_PATH || "./data/empresa.db",
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:5173",
